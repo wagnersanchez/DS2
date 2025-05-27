@@ -1,0 +1,125 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Nota Fiscal {{ object.serie }}/{{ object.numero }}</h2>
+    <p>Status: {{ object.get_status_display }}</p>
+    
+    {% if object.motivo_erro %}
+    <div class="alert alert-danger">
+        <strong>Erro:</strong> {{ object.motivo_erro }}
+    </div>
+    {% endif %}
+    
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Dados da Nota</h5>
+        </div>
+        <div class="card-body">
+            <dl class="row">
+                <dt class="col-sm-3">Emitente</dt>
+                <dd class="col-sm-9">{{ object.emitente.razao_social }}</dd>
+                
+                <dt class="col-sm-3">Destinatário</dt>
+                <dd class="col-sm-9">{{ object.destinatario.razao_social }}</dd>
+                
+                <dt class="col-sm-3">Natureza</dt>
+                <dd class="col-sm-9">{{ object.natureza_operacao }}</dd>
+                
+                <dt class="col-sm-3">Data Emissão</dt>
+                <dd class="col-sm-9">{{ object.data_emissao }}</dd>
+                
+                {% if object.chave %}
+                <dt class="col-sm-3">Chave</dt>
+                <dd class="col-sm-9">{{ object.chave }}</dd>
+                {% endif %}
+                
+                {% if object.protocolo %}
+                <dt class="col-sm-3">Protocolo</dt>
+                <dd class="col-sm-9">{{ object.protocolo }}</dd>
+                {% endif %}
+                
+                <dt class="col-sm-3">Total</dt>
+                <dd class="col-sm-9">R$ {{ object.valor_total_nota }}</dd>
+            </dl>
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Itens</h5>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Produto</th>
+                        <th>Quantidade</th>
+                        <th>Valor Unit.</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in object.itens.all %}
+                    <tr>
+                        <td>{{ item.ordem }}</td>
+                        <td>{{ item.produto.descricao }}</td>
+                        <td>{{ item.quantidade }}</td>
+                        <td>R$ {{ item.valor_unitario }}</td>
+                        <td>R$ {{ item.valor_total }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="mb-4">
+        {% if object.status == 'V' %}
+        <form method="post" action="{% url 'nota_fiscal_emitir' pk=object.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary">Emitir NFe</button>
+        </form>
+        {% endif %}
+        
+        {% if object.status == 'A' %}
+        <form method="post" action="{% url 'nota_fiscal_consultar_status' pk=object.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-info">Consultar Status</button>
+        </form>
+        
+        <button type="button" class="btn btn-danger mt-2" data-toggle="modal" data-target="#cancelarModal">
+            Cancelar NFe
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal de Cancelamento -->
+<div class="modal fade" id="cancelarModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Cancelar NFe</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <form method="post" action="{% url 'nota_fiscal_cancelar' pk=object.pk %}">
+                <div class="modal-body">
+                    {% csrf_token %}
+                    <div class="form-group">
+                        <label for="justificativa">Justificativa (mín. 15 caracteres)</label>
+                        <textarea class="form-control" id="justificativa" name="justificativa" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-danger">Confirmar Cancelamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

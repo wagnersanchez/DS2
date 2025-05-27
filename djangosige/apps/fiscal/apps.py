@@ -4,4 +4,6 @@ from django.apps import AppConfig
 
 
 class FiscalConfig(AppConfig):
-    name = 'fiscal'
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'djangosige.apps.fiscal'  # Nome completo obrigatório
+    verbose_name = "Fiscal"  # Opcional

@@ -1,570 +1,405 @@
 # -*- coding: utf-8 -*-
-
-from djangosige.apps.vendas.models import ItensVenda, Pagamento
-
+from io import BytesIO
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-
-from geraldo import Report, ReportBand, SubReport
-from geraldo.widgets import Label, SystemField, ObjectValue
-from geraldo.graphics import Image, Line
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm, cm
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image,
+    PageBreak, KeepTogether
+)
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.pdfgen import canvas
+from djangosige.apps.vendas.models import ItensVenda, Pagamento
+from django.conf import settings
+import os
 
-REPORT_FONT = 'Times'
-REPORT_FONT_BOLD = REPORT_FONT + '-Bold'
+# Font configurations
+REPORT_FONT = 'Helvetica'
+REPORT_FONT_BOLD = 'Helvetica-Bold'
 
+class VendaReport:
+    def __init__(self, buffer=None, pagesize=A4):
+        self.buffer = buffer if buffer else BytesIO()
+        self.pagesize = pagesize
+        self.width, self.height = self.pagesize
+        self.styles = getSampleStyleSheet()
+        
+        # Configure custom styles
+        self._configure_styles()
+        
+    def _configure_styles(self):
+        """Configure custom styles for the report"""
+        self.styles.add(ParagraphStyle(
+            name='Header1',
+            fontName=REPORT_FONT_BOLD,
+            fontSize=14,
+            leading=15,
+            alignment=TA_CENTER,
+            spaceAfter=12
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='Header2',
+            fontName=REPORT_FONT_BOLD,
+            fontSize=12,
+            leading=12,
+            spaceAfter=6
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='Normal',
+            fontName=REPORT_FONT,
+            fontSize=10,
+            leading=12,
+            spaceAfter=6
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='Right',
+            fontName=REPORT_FONT,
+            fontSize=10,
+            leading=12,
+            alignment=TA_RIGHT,
+            spaceAfter=6
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='Bold',
+            fontName=REPORT_FONT_BOLD,
+            fontSize=10,
+            leading=12,
+            spaceAfter=6
+        ))
 
-class VendaReport(Report):
+    def generate_report(self, venda, user=None):
+        """Generate the complete sales report"""
+        doc = SimpleDocTemplate(
+            self.buffer,
+            pagesize=self.pagesize,
+            rightMargin=15*mm,
+            leftMargin=15*mm,
+            topMargin=20*mm,
+            bottomMargin=15*mm
+        )
+        
+        elements = []
+        
+        # Add header with company info
+        elements += self._generate_header(venda, user)
+        
+        # Document title
+        doc_title = "ORÇAMENTO DE VENDA" if venda.__class__.__name__ == 'OrcamentoVenda' else "PEDIDO DE VENDA"
+        elements.append(Paragraph(doc_title, self.styles['Header1']))
+        
+        # Document info (number and dates)
+        elements += self._generate_document_info(venda)
+        elements.append(Spacer(1, 10*mm))
+        
+        # Customer information
+        elements += self._generate_cliente_section(venda)
+        elements.append(Spacer(1, 5*mm))
+        
+        # Products table
+        elements += self._generate_produtos_section(venda)
+        elements.append(Spacer(1, 5*mm))
+        
+        # Payment conditions
+        elements += self._generate_payment_conditions(venda)
+        elements.append(Spacer(1, 5*mm))
+        
+        # Payment schedule
+        elements += self._generate_pagamentos_section(venda)
+        elements.append(Spacer(1, 5*mm))
+        
+        # Totals summary
+        elements += self._generate_totals_section(venda)
+        elements.append(Spacer(1, 10*mm))
+        
+        # Observations
+        elements += self._generate_observations(venda)
+        
+        # Footer
+        elements += self._generate_footer()
+        
+        doc.build(elements, onFirstPage=self._add_page_number, onLaterPages=self._add_page_number)
+        pdf = self.buffer.getvalue()
+        self.buffer.close()
+        return pdf
 
-    def __init__(self, *args, **kargs):
-        super(VendaReport, self).__init__(*args, **kargs)
-        self.title = 'Relatorio de venda'
+    def _generate_header(self, venda, user):
+        """Generate header with company logo and info"""
+        section = []
+        
+        try:
+            if user and hasattr(user, 'm_empresa') and user.m_empresa.m_empresa.logo_file:
+                logo_path = os.path.join(settings.MEDIA_ROOT, str(user.m_empresa.m_empresa.logo_file))
+                if os.path.exists(logo_path):
+                    logo = Image(logo_path, width=50*mm, height=20*mm)
+                    logo.hAlign = 'CENTER'
+                    section.append(logo)
+                    section.append(Spacer(1, 5*mm))
+            
+            if user and hasattr(user, 'm_empresa'):
+                empresa = user.m_empresa.m_empresa
+                section.append(Paragraph(empresa.nome_razao_social, self.styles['Header2']))
+                
+                if hasattr(empresa, 'endereco_padrao'):
+                    endereco = empresa.endereco_padrao
+                    section.append(Paragraph(endereco.format_endereco_completo, self.styles['Normal']))
+                
+                if hasattr(empresa, 'telefone_padrao'):
+                    section.append(Paragraph(f"Telefone: {empresa.telefone_padrao.telefone}", self.styles['Normal']))
+                
+                if hasattr(empresa, 'email_padrao'):
+                    section.append(Paragraph(f"Email: {empresa.email_padrao.email}", self.styles['Normal']))
+                
+                section.append(Spacer(1, 5*mm))
+        except:
+            pass
+            
+        return section
 
-        self.page_size = A4
-        self.margin_left = 0.8 * cm
-        self.margin_top = 0.8 * cm
-        self.margin_right = 0.8 * cm
-        self.margin_bottom = 0.8 * cm
+    def _generate_document_info(self, venda):
+        """Generate document number and dates section"""
+        section = []
+        
+        data = [
+            ['Número:', str(venda.id), 'Emissão:', venda.data_emissao.strftime('%d/%m/%Y')]
+        ]
+        
+        if hasattr(venda, 'data_vencimento'):
+            data[0].extend(['Validade:', venda.data_vencimento.strftime('%d/%m/%Y')])
+        elif hasattr(venda, 'data_entrega'):
+            data[0].extend(['Entrega:', venda.data_entrega.strftime('%d/%m/%Y') if venda.data_entrega else ''])
+        
+        table = Table(data, colWidths=[20*mm, 30*mm, 20*mm, 30*mm, 20*mm, 30*mm])
+        table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        section.append(table)
+        return section
 
-        self.topo_pagina = TopoPagina()
-        self.dados_cliente = DadosCliente()
-        self.banda_produtos = BandaProdutos()
-        self.dados_produtos = DadosProdutos()
-        self.totais_venda = TotaisVenda()
-        self.banda_pagamento = BandaPagamento()
-        self.dados_pagamento = DadosPagamento()
-        self.observacoes = Observacoes()
-        self.banda_foot = BandaFoot()
-
-
-class TopoPagina(ReportBand):
-
-    def __init__(self):
-        super(TopoPagina, self).__init__()
-        self.elements = []
-        txt = SystemField(expression='%(report_title)s', top=0.65 *
-                          cm, left=0 * cm, width=19.4 * cm, height=0.8 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 15, 'alignment': TA_CENTER, 'leading': 15}
-        self.elements.append(txt)
-
-        txt = SystemField(expression='Página %(page_number)s de %(last_page_number)s',
-                          top=3.1 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 8.5,
-                     'alignment': TA_RIGHT, 'leading': 8.5}
-        self.elements.append(txt)
-
-        self.elements.append(Line(top=3.6 * cm, bottom=3.6 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        self.height = 3.65 * cm
-
-    def inserir_data_emissao(self, data_emissao):
-        if data_emissao:
-            txt = ObjectValue(attribute_name='format_data_emissao', display_format='Data: %s',
-                              top=1.45 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
+    def _generate_cliente_section(self, venda):
+        """Generate customer information section"""
+        section = []
+        cliente = venda.cliente
+        
+        section.append(Paragraph('CLIENTE', self.styles['Header2']))
+        
+        # Basic info table
+        data = [
+            ['Nome/Razão Social:', cliente.nome_razao_social]
+        ]
+        
+        # Document info
+        if hasattr(cliente, 'pessoa_jur_info'):
+            doc_info = cliente.pessoa_jur_info
+            data.append(['CNPJ:', doc_info.format_cnpj()])
+            if doc_info.inscricao_estadual:
+                data.append(['Inscrição Estadual:', doc_info.format_ie()])
         else:
-            txt = SystemField(expression='Data: %(now:%d/%m/%Y)s',
-                              top=1.45 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-        self.elements.append(txt)
-
-    def inserir_data_validade(self, data_validade):
-        if data_validade:
-            txt = ObjectValue(attribute_name='format_data_vencimento', display_format='Válido até: %s',
-                              top=2.05 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-
-    def inserir_data_entrega(self, data_entrega):
-        if data_entrega:
-            txt = ObjectValue(attribute_name='format_data_entrega', display_format='Data de entrega: %s',
-                              top=2.05 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-
-    def inserir_logo(self, path_imagem):
-        logo = Image(left=0.5 * cm, top=0.3 * cm, right=10 * cm, bottom=0.5 *
-                     cm, width=5.5 * cm, height=5.5 * cm, filename=path_imagem)
-        self.elements.append(logo)
-
-
-class DadosCliente(ReportBand):
-
-    def __init__(self):
-        super(DadosCliente, self).__init__()
-        self.ender_info = False
-        self.elements = []
-        txt = ObjectValue(attribute_name='cliente.nome_razao_social',
-                          top=0.3 * cm, left=0.3 * cm, width=8 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 12, 'leading': 12}
-        self.elements.append(txt)
-
-        self.height = 2.7 * cm
-
-    def inserir_informacoes_pj(self):
-        txt = ObjectValue(attribute_name='cliente.pessoa_jur_info.format_cnpj',
-                          top=0.3 * cm, left=8.1 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cliente.pessoa_jur_info.format_ie',
-                          top=0.3 * cm, left=13 * cm, width=6.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-    def inserir_informacoes_pf(self):
-        txt = ObjectValue(attribute_name='cliente.pessoa_fis_info.format_cpf',
-                          top=0.3 * cm, left=8.1 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cliente.pessoa_fis_info.format_rg',
-                          top=0.3 * cm, left=13 * cm, width=6.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-    def inserir_informacoes_endereco(self):
-        self.ender_info = True
-        txt = ObjectValue(attribute_name='cliente.endereco_padrao.format_endereco',
-                          display_format='Endereço: %s', top=1.1 * cm, left=0.3 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cliente.endereco_padrao.municipio',
-                          display_format='Cidade: %s', top=1.6 * cm, left=0.3 * cm, width=8 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cliente.endereco_padrao.uf', display_format='UF: %s',
-                          top=1.6 * cm, left=8.1 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cliente.endereco_padrao.cep', display_format='CEP: %s',
-                          top=1.6 * cm, left=13 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-    def inserir_informacoes_telefone(self):
-        if not self.ender_info:
-            top = 1.1 * cm
-        else:
-            top = 2.1 * cm
-
-        txt = ObjectValue(attribute_name='cliente.telefone_padrao.telefone',
-                          display_format='Tel: %s', top=top, left=0.3 * cm, width=8 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-    def inserir_informacoes_email(self):
-        if not self.ender_info:
-            top = 1.1 * cm
-        else:
-            top = 2.1 * cm
-
-        txt = ObjectValue(attribute_name='cliente.email_padrao.email', display_format='Email: %s',
-                          top=top, left=8.1 * cm, width=11.3 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10, 'leading': 10}
-        self.elements.append(txt)
-
-
-class BandaProdutos(ReportBand):
-
-    def __init__(self):
-        super(BandaProdutos, self).__init__()
-        self.elements = []
-
-        self.height = 0 * cm
-
-
-class DadosProdutos(SubReport):
-
-    def __init__(self):
-        super(DadosProdutos, self).__init__()
-        self.get_queryset = lambda self, parent_object: ItensVenda.objects.filter(
-            venda_id=parent_object) or []
-
-    class band_header(ReportBand):
-
-        def __init__(self):
-            super(DadosProdutos.band_header, self).__init__()
-            self.elements = []
-
-            self.elements.append(Line(
-                top=0.1 * cm, bottom=0.1 * cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-            txt = Label(text='Produtos', top=0.2 * cm, left=0 *
-                        cm, width=19.4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 11, 'alignment': TA_CENTER, 'leading': 11}
-            self.elements.append(txt)
-
-            txt = Label(text='Cód.', top=1.1 * cm, left=0 *
-                        cm, width=2.1 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'alignment': TA_CENTER, 'fontSize': 9, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Descrição', top=1.1 * cm, left=2.1 *
-                        cm, width=4.8 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Un.', top=1.1 * cm, left=6.9 *
-                        cm, width=1.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Qtde.', top=1.1 * cm, left=8.4 *
-                        cm, width=1.9 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Vl. Unit. (R$)', top=1.1 * cm,
-                        left=10.3 * cm, width=3.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Desconto (R$)', top=1.1 * cm,
-                        left=13.8 * cm, width=2.4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = Label(text='Total (R$)', top=1.1 * cm,
-                        left=16.2 * cm, width=3.2 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'fontSize': 9, 'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-
-            self.height = 1.8 * cm
-
-    class band_detail(ReportBand):
-
-        def __init__(self):
-            super(DadosProdutos.band_detail, self).__init__()
-
-            txt = ObjectValue(attribute_name='produto.codigo', top=0 *
-                              cm, left=0 * cm, width=2.1 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='produto.descricao', top=0 *
-                              cm, left=2.1 * cm, width=4.8 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='produto.format_unidade',
-                              top=0 * cm, left=6.9 * cm, width=1.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_quantidade', top=0 *
-                              cm, left=8.4 * cm, width=1.9 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_valor_unit', top=0 *
-                              cm, left=10.3 * cm, width=3.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_desconto', top=0 *
-                              cm, left=13.8 * cm, width=2.4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_total', top=0 *
-                              cm, left=16.2 * cm, width=3.2 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-
-        def set_band_height(self, n_produtos):
-            self.height = 0.4 * cm * n_produtos
-
-
-class TotaisVenda(ReportBand):
-
-    def __init__(self):
-        super(TotaisVenda, self).__init__()
-        self.elements = []
-        self.elements.append(Line(top=0.1 * cm, bottom=0.1 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        txt = Label(text='Totais', top=0.2 * cm, left=0 *
-                    cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 11, 'alignment': TA_CENTER, 'leading': 11}
-        self.elements.append(txt)
-
-        txt = Label(text='Frete', top=1 * cm, left=0 *
-                    cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_frete', display_format='R$ %s',
-                          top=1.5 * cm, left=0 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = Label(text='Seguro', top=1 * cm, left=4 *
-                    cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_seguro', display_format='R$ %s',
-                          top=1.5 * cm, left=4 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = Label(text='Despesas', top=1 * cm, left=8 *
-                    cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_despesas', display_format='R$ %s',
-                          top=1.5 * cm, left=8 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = Label(text='Desconto', top=1 * cm, left=12 *
-                    cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_desconto', display_format='R$ %s',
-                          top=1.5 * cm, left=12 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = Label(text='Impostos', top=1 * cm, left=16 *
-                    cm, width=3.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_impostos', display_format='R$ %s',
-                          top=1.5 * cm, left=16 * cm, width=3.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_CENTER, 'leading': 10}
-        self.elements.append(txt)
-
-        # Totais
-        self.elements.append(Line(top=2.3 * cm, bottom=2.3 *
-                                  cm, left=0.4 * cm, right=19 * cm, stroke_width=0.3))
-        txt = Label(text='Total sem impostos:', top=2.4 * cm,
-                    left=0 * cm, width=13.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_RIGHT, 'leading': 10}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_total_sem_imposto', display_format='R$ %s',
-                          top=2.4 * cm, left=13.4 * cm, width=5.6 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 10,
-                     'alignment': TA_RIGHT, 'leading': 10}
-        self.elements.append(txt)
-
-        self.elements.append(Line(top=2.9 * cm, bottom=2.9 *
-                                  cm, left=9.7 * cm, right=19 * cm, stroke_width=0.3))
-        txt = Label(text='Total:', top=3 * cm, left=0 *
-                    cm, width=13.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 11, 'alignment': TA_RIGHT, 'leading': 11}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='format_valor_total', display_format='R$ %s',
-                          top=3 * cm, left=13.4 * cm, width=5.6 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 10, 'alignment': TA_RIGHT, 'leading': 10}
-        self.elements.append(txt)
-
-        self.height = 3.6 * cm
-
-
-class BandaPagamento(ReportBand):
-
-    def __init__(self):
-        super(BandaPagamento, self).__init__()
-        self.elements = []
-
-        self.elements.append(Line(top=0.1 * cm, bottom=0.1 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        txt = Label(text='Pagamento', top=0.2 * cm, left=0 *
-                    cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 11, 'alignment': TA_CENTER, 'leading': 11}
-        self.elements.append(txt)
-
-        # Condicao de pagamento
-        txt = ObjectValue(attribute_name='cond_pagamento.get_forma_display',
-                          display_format='Forma: %s', top=1 * cm, left=0.5 * cm, width=4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9, 'leading': 9}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='cond_pagamento.n_parcelas',
-                          display_format='Nº de parcelas: %s', top=1 * cm, left=5 * cm, width=3 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9, 'leading': 9}
-        self.elements.append(txt)
-
-        self.height = 2 * cm
-
-
-class DadosPagamento(SubReport):
-
-    def __init__(self):
-        super(DadosPagamento, self).__init__()
-        self.get_queryset = lambda self, parent_object: Pagamento.objects.filter(
-            venda_id=parent_object) or []
-
-    class band_header(ReportBand):
-
-        def __init__(self):
-            super(DadosPagamento.band_header, self).__init__()
-            self.elements = []
-
-            txt = Label(text='Parcela', top=2 * cm, left=0 *
-                        cm, width=4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'alignment': TA_CENTER, 'fontSize': 10, 'leading': 10}
-            self.elements.append(txt)
-
-            txt = Label(text='Vencimento', top=2 * cm, left=4.1 *
-                        cm, width=4.1 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'alignment': TA_CENTER, 'fontSize': 10, 'leading': 10}
-            self.elements.append(txt)
-
-            txt = Label(text='Valor', top=2 * cm, left=8.3 *
-                        cm, width=4.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT_BOLD,
-                         'alignment': TA_CENTER, 'fontSize': 10, 'leading': 10}
-            self.elements.append(txt)
-
-            self.height = 2.7 * cm
-
-    class band_detail(ReportBand):
-
-        def __init__(self):
-            super(DadosPagamento.band_detail, self).__init__()
-
-            txt = ObjectValue(attribute_name='indice_parcela',
-                              top=0 * cm, left=0 * cm, width=4 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_vencimento', top=0 *
-                              cm, left=4.1 * cm, width=4.1 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-            txt = ObjectValue(attribute_name='format_valor_parcela',
-                              top=0 * cm, left=8.3 * cm, width=4.5 * cm, height=0.5 * cm)
-            txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                         'alignment': TA_CENTER, 'leading': 9}
-            self.elements.append(txt)
-
-            self.height = 0.6 * cm
-
-        def set_band_height(self, n_produtos):
-            self.height = 0.4 * cm * n_produtos
-
-
-class Observacoes(ReportBand):
-
-    def __init__(self):
-        super(Observacoes, self).__init__()
-        self.elements = []
-
-        self.elements.append(Line(top=0.1 * cm, bottom=0.1 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        txt = Label(text='Observações', top=0.2 * cm, left=0 *
-                    cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 11, 'alignment': TA_CENTER, 'leading': 11}
-        self.elements.append(txt)
-
-        txt = ObjectValue(attribute_name='observacoes', top=0.8 *
-                          cm, left=0.5 * cm, width=19.4 * cm, height=2 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9, 'leading': 9}
-        self.elements.append(txt)
-
-        self.height = 2 * cm
-
-    def inserir_vendedor(self):
-        self.elements.append(Line(top=2.5 * cm, bottom=2.5 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        txt = ObjectValue(attribute_name='vendedor', display_format='Vendedor: %s',
-                          top=2.6 * cm, left=0.5 * cm, width=19.4 * cm, height=2 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9, 'leading': 9}
-        self.elements.append(txt)
-
-
-class BandaFoot(ReportBand):
-
-    def __init__(self):
-        super(BandaFoot, self).__init__()
-        self.ender_info = False
-        self.elements = []
-
-        self.elements.append(Line(top=1.5 * cm, bottom=1.5 *
-                                  cm, left=0 * cm, right=19.4 * cm, stroke_width=0.3))
-
-        txt = Label(text='Gerado por djangoSIGE', top=1.5 * cm,
-                    left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT_BOLD,
-                     'fontSize': 8, 'alignment': TA_LEFT, 'leading': 8}
-        self.elements.append(txt)
-
-        txt = SystemField(expression='Data da impressão: %(now:%d/%m/%Y)s',
-                          top=1.5 * cm, left=0 * cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 8,
-                     'alignment': TA_RIGHT, 'leading': 8}
-        self.elements.append(txt)
-
-        self.height = 2 * cm
-
-    def inserir_nome_empresa(self, nome):
-        txt = Label(text=nome, top=0 * cm, left=0 * cm,
-                    width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                     'alignment': TA_CENTER, 'leading': 9}
-        self.elements.append(txt)
-
-    def inserir_endereco_empresa(self, endereco):
-        self.ender_info = True
-        txt = Label(text=endereco, top=0.5 * cm, left=0 *
-                    cm, width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                     'alignment': TA_CENTER, 'leading': 9}
-        self.elements.append(txt)
-
-    def inserir_telefone_empresa(self, telefone):
-        if self.ender_info:
-            top = 1 * cm
-        else:
-            top = 0.5 * cm
-
-        txt = Label(text=telefone, top=top, left=0 * cm,
-                    width=19.4 * cm, height=0.5 * cm)
-        txt.style = {'fontName': REPORT_FONT, 'fontSize': 9,
-                     'alignment': TA_CENTER, 'leading': 9}
-        self.elements.append(txt)
+            doc_info = cliente.pessoa_fis_info
+            data.append(['CPF:', doc_info.format_cpf()])
+            if hasattr(doc_info, 'rg'):
+                data.append(['RG:', doc_info.format_rg()])
+        
+        # Contact info
+        if hasattr(cliente, 'endereco_padrao'):
+            endereco = cliente.endereco_padrao
+            data.append(['Endereço:', endereco.format_endereco()])
+            data.append(['Cidade/UF:', f"{endereco.municipio}/{endereco.uf}"])
+            if endereco.cep:
+                data.append(['CEP:', endereco.cep])
+        
+        if hasattr(cliente, 'telefone_padrao'):
+            data.append(['Telefone:', cliente.telefone_padrao.telefone])
+        
+        if hasattr(cliente, 'email_padrao'):
+            data.append(['Email:', cliente.email_padrao.email])
+        
+        table = Table(data, colWidths=[40*mm, 130*mm])
+        table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        
+        section.append(table)
+        return section
+
+    def _generate_produtos_section(self, venda):
+        """Generate products table section"""
+        section = []
+        produtos = ItensVenda.objects.filter(venda_id=venda)
+        
+        section.append(Paragraph('PRODUTOS/SERVIÇOS', self.styles['Header2']))
+        
+        if not produtos.exists():
+            section.append(Paragraph('Nenhum produto encontrado.', self.styles['Normal']))
+            return section
+        
+        # Table header
+        data = [
+            [
+                'Código', 'Descrição', 'Unid.', 'Quant.', 
+                'Vl. Unit.', 'Desconto', 'Vl. Total'
+            ]
+        ]
+        
+        # Table rows
+        for item in produtos:
+            data.append([
+                item.produto.codigo,
+                item.produto.descricao,
+                item.produto.unidade,
+                str(item.quantidade),
+                f'R$ {item.valor_unit:,.2f}',
+                f'R$ {item.desconto:,.2f}' if item.desconto else '-',
+                f'R$ {item.get_total():,.2f}'
+            ])
+        
+        # Create table
+        table = Table(data, colWidths=[20*mm, 50*mm, 15*mm, 15*mm, 20*mm, 20*mm, 20*mm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3A4F57')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT_BOLD),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        
+        section.append(table)
+        return section
+
+    def _generate_payment_conditions(self, venda):
+        """Generate payment conditions section"""
+        section = []
+        
+        if not venda.cond_pagamento:
+            return section
+            
+        section.append(Paragraph('CONDIÇÕES DE PAGAMENTO', self.styles['Header2']))
+        section.append(Paragraph(venda.cond_pagamento.descricao, self.styles['Normal']))
+        
+        return section
+
+    def _generate_pagamentos_section(self, venda):
+        """Generate payment schedule section"""
+        section = []
+        pagamentos = Pagamento.objects.filter(venda_id=venda).order_by('vencimento')
+        
+        if not pagamentos.exists():
+            return section
+            
+        section.append(Paragraph('PAGAMENTOS', self.styles['Header2']))
+        
+        data = [
+            ['Parcela', 'Vencimento', 'Valor', 'Status']
+        ]
+        
+        for pagamento in pagamentos:
+            data.append([
+                str(pagamento.indice_parcela),
+                pagamento.vencimento.strftime('%d/%m/%Y'),
+                f'R$ {pagamento.valor:,.2f}',
+                pagamento.get_status_display()
+            ])
+        
+        table = Table(data, colWidths=[20*mm, 40*mm, 30*mm, 30*mm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3A4F57')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), REPORT_FONT_BOLD),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        
+        section.append(table)
+        return section
+
+    def _generate_totals_section(self, venda):
+        """Generate totals summary section"""
+        section = []
+        
+        data = [
+            ['Subtotal:', f'R$ {venda.get_total_produtos():,.2f}'],
+            ['Desconto:', f'R$ {venda.desconto:,.2f}' if venda.desconto else 'R$ 0,00'],
+            ['Frete:', f'R$ {venda.frete:,.2f}' if venda.frete else 'R$ 0,00'],
+            ['Despesas:', f'R$ {venda.despesas:,.2f}' if venda.despesas else 'R$ 0,00'],
+            ['Seguro:', f'R$ {venda.seguro:,.2f}' if venda.seguro else 'R$ 0,00'],
+            ['Total:', f'R$ {venda.valor_total:,.2f}']
+        ]
+        
+        table = Table(data, colWidths=[30*mm, 30*mm])
+        table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, -2), REPORT_FONT),
+            ('FONTNAME', (0, -1), (-1, -1), REPORT_FONT_BOLD),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
+            ('SPAN', (0, -1), (-1, -1)),
+        ]))
+        
+        section.append(table)
+        return section
+
+    def _generate_observations(self, venda):
+        """Generate observations section"""
+        section = []
+        
+        if not venda.observacoes:
+            return section
+            
+        section.append(Paragraph('OBSERVAÇÕES', self.styles['Header2']))
+        section.append(Paragraph(venda.observacoes, self.styles['Normal']))
+        
+        if hasattr(venda, 'vendedor') and venda.vendedor:
+            section.append(Spacer(1, 5*mm))
+            section.append(Paragraph(f"Vendedor: {venda.vendedor}", self.styles['Normal']))
+        
+        return section
+
+    def _generate_footer(self):
+        """Generate footer section"""
+        section = []
+        section.append(Spacer(1, 10*mm))
+        section.append(Paragraph('_________________________________________', self.styles['Normal']))
+        section.append(Paragraph('Assinatura', self.styles['Normal']))
+        
+        # Footer info
+        footer_data = [
+            ['Gerado por djangoSIGE', '', f'Data da impressão: {datetime.now().strftime("%d/%m/%Y")}']
+        ]
+        
+        footer_table = Table(footer_data, colWidths=[60*mm, 60*mm, 60*mm])
+        footer_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), REPORT_FONT),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+            ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+        ]))
+        
+        section.append(footer_table)
+        return section
+
+    def _add_page_number(self, canvas, doc):
+        """Add page number to each page"""
+        page_num = canvas.getPageNumber()
+        text = f"Página {page_num}"
+        canvas.setFont(REPORT_FONT, 8)
+        canvas.drawRightString(200*mm, 10*mm, text)

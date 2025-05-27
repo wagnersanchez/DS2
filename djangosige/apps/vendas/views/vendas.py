@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from django.urls import reverse_lazy
-from django.shortcuts import redirect
+from django.shortcuts import redirect, get_object_or_404
 from django.http import HttpResponse
 
 from djangosige.apps.base.custom_views import CustomView, CustomCreateView, CustomListView, CustomUpdateView
@@ -12,11 +12,18 @@ from djangosige.apps.cadastro.models import MinhaEmpresa
 from djangosige.apps.login.models import Usuario
 from djangosige.configs.settings import MEDIA_ROOT
 
-from geraldo.generators import PDFGenerator
-from datetime import datetime
-import io
 
-from .report_vendas import VendaReport
+from datetime import datetime
+from io import BytesIO
+
+# from .report_vendas import VendaReport
+
+# ReportLab imports
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import mm, inch
 
 
 class AdicionarVendaView(CustomCreateView):
@@ -440,83 +447,192 @@ class GerarCopiaPedidoVendaView(GerarCopiaVendaView):
 
 
 class GerarPDFVenda(CustomView):
-
     def gerar_pdf(self, title, venda, user_id):
-        resp = HttpResponse(content_type='application/pdf')
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=20 * mm,
+            bottomMargin=20 * mm,
+            title=title
+        )
+        
+        styles = getSampleStyleSheet()
+        elements = []
 
-        venda_pdf = io.BytesIO()
-        venda_report = VendaReport(queryset=[venda, ])
-        venda_report.title = title
+        # Estilo personalizado
+        style_title = ParagraphStyle(
+            name='Title',
+            parent=styles['Title'],
+            fontSize=14,
+            alignment=1,
+            spaceAfter=12,
+        )
+        style_normal = styles['Normal']
+        style_heading = styles['Heading4']
 
-        venda_report.band_page_footer = venda_report.banda_foot
-
+        # Logo da empresa
         try:
             usuario = Usuario.objects.get(pk=user_id)
             m_empresa = MinhaEmpresa.objects.get(m_usuario=usuario)
-            flogo = m_empresa.m_empresa.logo_file
-            logo_path = '{0}{1}'.format(MEDIA_ROOT, flogo.name)
-            if flogo != 'imagens/logo.png':
-                venda_report.topo_pagina.inserir_logo(logo_path)
+            empresa = m_empresa.m_empresa
+            
+            if empresa.logo_file and empresa.logo_file != 'imagens/logo.png':
+                logo_path = f"{MEDIA_ROOT}{empresa.logo_file}"
+                logo = Image(logo_path, width=2*inch, height=1*inch)
+                elements.append(logo)
+                elements.append(Spacer(1, 12))
+        except Exception as e:
+            print(f"Erro ao carregar logo: {e}")
 
-            venda_report.band_page_footer.inserir_nome_empresa(
-                m_empresa.m_empresa.nome_razao_social)
-            if m_empresa.m_empresa.endereco_padrao:
-                venda_report.band_page_footer.inserir_endereco_empresa(
-                    m_empresa.m_empresa.endereco_padrao.format_endereco_completo)
-            if m_empresa.m_empresa.telefone_padrao:
-                venda_report.band_page_footer.inserir_telefone_empresa(
-                    m_empresa.m_empresa.telefone_padrao.telefone)
-        except:
-            pass
+        # Título do documento
+        elements.append(Paragraph(title, style_title))
+        elements.append(Spacer(1, 12))
 
-        venda_report.topo_pagina.inserir_data_emissao(venda.data_emissao)
+        # Dados da Empresa
+        try:
+            elements.append(Paragraph(f"<b>{empresa.nome_razao_social}</b>", style_heading))
+            
+            if empresa.endereco_padrao:
+                endereco = empresa.endereco_padrao.format_endereco_completo
+                elements.append(Paragraph(endereco, style_normal))
+            
+            if empresa.telefone_padrao:
+                telefone = empresa.telefone_padrao.telefone
+                elements.append(Paragraph(f"Telefone: {telefone}", style_normal))
+            
+            elements.append(Spacer(1, 12))
+        except Exception as e:
+            print(f"Erro ao carregar dados da empresa: {e}")
+
+        # Dados da Venda
+        elements.append(Paragraph("<b>DADOS DA VENDA</b>", style_heading))
+        
+        # Tratamento para datas nulas
+        data_emissao = venda.data_emissao.strftime("%d/%m/%Y") if venda.data_emissao else "Não informada"
+        
+        # Verifica o tipo de venda antes de acessar campos específicos
         if isinstance(venda, OrcamentoVenda):
-            venda_report.topo_pagina.inserir_data_validade(
-                venda.data_vencimento)
+            data_vencimento = venda.data_vencimento.strftime("%d/%m/%Y") if venda.data_vencimento else "Não informada"
         elif isinstance(venda, PedidoVenda):
-            venda_report.topo_pagina.inserir_data_entrega(venda.data_entrega)
-        venda_report.band_page_header = venda_report.topo_pagina
+            data_entrega = venda.data_entrega.strftime("%d/%m/%Y") if venda.data_entrega else "Não informada"
+        else:
+            data_vencimento = ""
+            data_entrega = ""
+        
+        venda_data = [
+            ["Número:", str(venda.id)],
+            ["Data de Emissão:", data_emissao],
+        ]
+        
+        if isinstance(venda, OrcamentoVenda):
+            venda_data.append(["Data de Validade:", data_vencimento])
+        elif isinstance(venda, PedidoVenda):
+            venda_data.append(["Data de Entrega:", data_entrega])
+        
+        venda_table = Table(venda_data, colWidths=[80 * mm, 100 * mm])
+        venda_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(venda_table)
+        elements.append(Spacer(1, 12))
 
-        if venda.cliente.tipo_pessoa == 'PJ':
-            venda_report.dados_cliente.inserir_informacoes_pj()
-        elif venda.cliente.tipo_pessoa == 'PF':
-            venda_report.dados_cliente.inserir_informacoes_pf()
+        # Dados do Cliente
+        elements.append(Paragraph("<b>DADOS DO CLIENTE</b>", style_heading))
+        
+        cliente = venda.cliente
+        cliente_data = [
+            ["Nome/Razão Social:", cliente.nome_razao_social],
+            ["CPF/CNPJ:", cliente.format_cpf_cnpj()],
+        ]
+        
+        if cliente.endereco_padrao:
+            cliente_data.append(["Endereço:", cliente.endereco_padrao.format_endereco_completo])
+        if cliente.telefone_padrao:
+            cliente_data.append(["Telefone:", cliente.telefone_padrao.telefone])
+        if cliente.email_padrao:
+            cliente_data.append(["E-mail:", cliente.email_padrao.email])
+        
+        cliente_table = Table(cliente_data, colWidths=[80 * mm, 100 * mm])
+        cliente_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(cliente_table)
+        elements.append(Spacer(1, 12))
 
-        if venda.cliente.endereco_padrao:
-            venda_report.dados_cliente.inserir_informacoes_endereco()
-        if venda.cliente.telefone_padrao:
-            venda_report.dados_cliente.inserir_informacoes_telefone()
-        if venda.cliente.email_padrao:
-            venda_report.dados_cliente.inserir_informacoes_email()
+        # Itens da Venda
+        elements.append(Paragraph("<b>ITENS DA VENDA</b>", style_heading))
+        
+        itens = venda.itens_venda.all()
+        itens_data = [["Produto", "Quantidade", "Valor Unit.", "Total"]]
+        
+        for item in itens:
+            itens_data.append([
+                item.produto.descricao,
+                str(item.quantidade),
+                f"R$ {item.valor_unit:.2f}",
+                f"R$ {item.get_total():.2f}",
+            ])
+        
+        itens_table = Table(itens_data, colWidths=[100 * mm, 30 * mm, 30 * mm, 30 * mm])
+        itens_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#CCCCCC")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey),
+        ]))
+        elements.append(itens_table)
+        elements.append(Spacer(1, 12))
 
-        venda_report.band_page_header.child_bands.append(
-            venda_report.dados_cliente)
+        # Totais
+        elements.append(Paragraph("<b>TOTAIS</b>", style_heading))
+        
+        totais_data = [
+            ["Subtotal:", f"R$ {venda.get_total_sem_imposto():.2f}"],
+            ["Impostos:", f"R$ {venda.get_total_impostos():.2f}"],
+            ["Total:", f"R$ {venda.valor_total:.2f}"],
+        ]
+        
+        totais_table = Table(totais_data, colWidths=[130 * mm, 50 * mm])
+        totais_table.setStyle(TableStyle([
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ]))
+        elements.append(totais_table)
+        elements.append(Spacer(1, 12))
 
-        venda_report.dados_produtos.band_detail.set_band_height(
-            len(ItensVenda.objects.filter(venda_id=venda)))
-        venda_report.banda_produtos.elements.append(
-            venda_report.dados_produtos)
-        venda_report.band_page_header.child_bands.append(
-            venda_report.banda_produtos)
-
-        venda_report.band_page_header.child_bands.append(
-            venda_report.totais_venda)
-
+        # Condições de Pagamento
         if venda.cond_pagamento:
-            venda_report.banda_pagamento.elements.append(
-                venda_report.dados_pagamento)
-            venda_report.band_page_header.child_bands.append(
-                venda_report.banda_pagamento)
+            elements.append(Paragraph("<b>CONDIÇÕES DE PAGAMENTO</b>", style_heading))
+            elements.append(Paragraph(venda.cond_pagamento.descricao, style_normal))
+            elements.append(Spacer(1, 12))
 
-        venda_report.observacoes.inserir_vendedor()
-        venda_report.band_page_header.child_bands.append(
-            venda_report.observacoes)
+        # Observações
+        elements.append(Paragraph("<b>OBSERVAÇÕES</b>", style_heading))
+        elements.append(Paragraph(venda.observacoes or "Nenhuma observação.", style_normal))
+        elements.append(Spacer(1, 12))
 
-        venda_report.generate_by(PDFGenerator, filename=venda_pdf)
-        pdf = venda_pdf.getvalue()
-        resp.write(pdf)
+        # Vendedor
+        elements.append(Paragraph(f"<b>Vendedor:</b> {venda.vendedor}", style_normal))
 
-        return resp
+        # Gera o PDF
+        doc.build(elements)
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{title}.pdf"'
+        response.write(pdf)
+        return response
 
 
 class GerarPDFOrcamentoVenda(GerarPDFVenda):
@@ -524,13 +640,11 @@ class GerarPDFOrcamentoVenda(GerarPDFVenda):
 
     def get(self, request, *args, **kwargs):
         venda_id = kwargs.get('pk', None)
-
         if not venda_id:
             return HttpResponse('Objeto não encontrado.')
 
-        obj = OrcamentoVenda.objects.get(pk=venda_id)
-        title = 'Orçamento de venda nº {}'.format(venda_id)
-
+        obj = get_object_or_404(OrcamentoVenda, pk=venda_id)  # Agora a função está disponível
+        title = f'Orçamento de venda nº {venda_id}'
         return self.gerar_pdf(title, obj, request.user.id)
 
 
@@ -539,11 +653,10 @@ class GerarPDFPedidoVenda(GerarPDFVenda):
 
     def get(self, request, *args, **kwargs):
         venda_id = kwargs.get('pk', None)
-
         if not venda_id:
             return HttpResponse('Objeto não encontrado.')
 
-        obj = PedidoVenda.objects.get(pk=venda_id)
-        title = 'Pedido de venda nº {}'.format(venda_id)
-
+        obj = get_object_or_404(PedidoVenda, pk=venda_id)  # Agora a função está disponível
+        title = f'Pedido de venda nº {venda_id}'
         return self.gerar_pdf(title, obj, request.user.id)
+        

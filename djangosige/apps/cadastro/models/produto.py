@@ -102,8 +102,15 @@ class Produto(models.Model):
     cest = models.CharField(max_length=7, null=True, blank=True)
     cfop_padrao = models.ForeignKey(
         'fiscal.NaturezaOperacao', null=True, blank=True, on_delete=models.PROTECT)
+    #grupo_fiscal = models.ForeignKey(
+    #    'fiscal.GrupoFiscal', null=True, blank=True, on_delete=models.PROTECT)
     grupo_fiscal = models.ForeignKey(
-        'fiscal.GrupoFiscal', null=True, blank=True, on_delete=models.PROTECT)
+        'fiscal.GrupoFiscal',  # <--- USAR STRING AQUI
+        on_delete=models.SET_NULL, # Ou outra política de exclusão
+        null=True,
+        blank=True,
+        verbose_name='Grupo Fiscal'
+    )
 
     # Estoque
     estoque_minimo = models.DecimalField(max_digits=16, decimal_places=2, validators=[

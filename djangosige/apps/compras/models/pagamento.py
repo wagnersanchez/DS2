@@ -20,7 +20,7 @@ class Pagamento(models.Model):
 
     @property
     def format_valor_parcela(self):
-        return locale.format(u'%.2f', self.valor_parcela, 1)
+        return locale.format_string(u'%.2f', self.valor_parcela, 1)
 
     @property
     def format_vencimento(self):

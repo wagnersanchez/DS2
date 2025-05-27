@@ -1,102 +1,70 @@
-# -*- coding: utf-8 -*-
+# djangosige/apps/fiscal/urls.py
+from django.urls import path
+from .views.nota_fiscal import ( 
+    NotaFiscalDetailView,
+    NotaFiscalEmitirView,
+    NotaFiscalConsultarStatusView, 
+    NotaFiscalCancelarView,
+    NotaFiscalBaixarXMLView, 
+    ListaNotasFiscaisSaidaView, 
+    ListaNotasFiscaisEntradaView,
+    ConfiguracaoNotaFiscalView,
+    ConsultarCadastroSefazView,
+    InutilizarNotasFiscaisView,
+    ConsultarNotaFiscalSefazView, 
+    # Certifique-se de que a view ManifestacaoDestinatarioView existe e está importada abaixo
+    # from .views.nota_fiscal import ManifestacaoDestinatarioView # DESCOMENTE E AJUSTE QUANDO A VIEW EXISTIR
+)
+# Se ManifestacaoDestinatarioView estiver em outro arquivo, importe de lá.
+# Para o exemplo, vamos assumir que será criada em views/nota_fiscal.py
+# Se você já a criou, apenas garanta que a importação acima está correta.
+# Se não, você precisará criar esta view.
 
-from django.conf.urls import url
-from . import views
+# Placeholder para a view, substitua pela importação real quando a view for criada
+from django.views.generic import TemplateView # Apenas para o placeholder funcionar
+class ManifestacaoDestinatarioView(TemplateView): # CRIE ESTA VIEW CORRETAMENTE
+    template_name = "base/pagina_em_construcao.html" # Exemplo de template
 
-app_name = 'fiscal'
+from .views.natureza_operacao import (
+    NaturezaOperacaoListView,
+    AdicionarNaturezaOperacaoView,
+    EditarNaturezaOperacaoView,
+)
+from .views.tributos import (
+    GrupoFiscalListView, 
+    AdicionarGrupoFiscalView, 
+    EditarGrupoFiscalView
+)
+
+app_name = 'fiscal' 
+
 urlpatterns = [
-    # Nota fiscal saida
-    # fiscal/notafiscal/saida/adicionar/
-    url(r'notafiscal/saida/adicionar/$',
-        views.AdicionarNotaFiscalSaidaView.as_view(), name='addnotafiscalsaidaview'),
-    # fiscal/notafiscal/saida/listanotafiscal
-    url(r'notafiscal/saida/listanotafiscal/$',
-        views.NotaFiscalSaidaListView.as_view(), name='listanotafiscalsaidaview'),
-    # fiscal/notafiscal/saida/editar/
-    url(r'notafiscal/saida/editar/(?P<pk>[0-9]+)/$', views.EditarNotaFiscalSaidaView.as_view(
-    ), name='editarnotafiscalsaidaview'),
-    # fiscal/notafiscal/saida/importar/
-    url(r'notafiscal/saida/importar/$',
-        views.ImportarNotaSaidaView.as_view(), name='importarnotafiscalsaida'),
-    # fiscal/notafiscal/saida/gerar/
-    url(r'notafiscal/saida/gerar/(?P<pk>[0-9]+)/$',
-        views.GerarNotaFiscalSaidaView.as_view(), name='gerarnotafiscalsaida'),
+    # URLs para NotaFiscal
+    path('notafiscal/saida/lista/', ListaNotasFiscaisSaidaView.as_view(), name='listanotafiscalsaidaview'),
+    path('notafiscal/entrada/lista/', ListaNotasFiscaisEntradaView.as_view(), name='listanotafiscalentradaview'),
+    
+    path('configuracao/nfe/', ConfiguracaoNotaFiscalView.as_view(), name='configuracaonotafiscal'),
+    path('nota-fiscal/<int:pk>/', NotaFiscalDetailView.as_view(), name='nota_fiscal_detail'),
+    path('nota-fiscal/<int:pk>/emitir/', NotaFiscalEmitirView.as_view(), name='nota_fiscal_emitir'),
+    path('nota-fiscal/<int:pk>/consultar-status/', NotaFiscalConsultarStatusView.as_view(), name='nota_fiscal_consultar_status'),
+    path('nota-fiscal/<int:pk>/cancelar/', NotaFiscalCancelarView.as_view(), name='nota_fiscal_cancelar'),
+    path('nota-fiscal/<int:pk>/baixar-xml/', NotaFiscalBaixarXMLView.as_view(), name='baixarnota'), 
+    
+    # URLs para Natureza da Operação
+    path('naturezaoperacao/lista/', NaturezaOperacaoListView.as_view(), name='listanaturezaoperacaoview'),
+    path('naturezaoperacao/adicionar/', AdicionarNaturezaOperacaoView.as_view(), name='addnaturezaoperacaoview'),
+    path('naturezaoperacao/editar/<int:pk>/', EditarNaturezaOperacaoView.as_view(), name='editarnaturezaoperacaoview'),
+    
+    # URLs para Grupo Fiscal
+    path('grupofiscal/lista/', GrupoFiscalListView.as_view(), name='listagrupofiscalview'),
+    path('grupofiscal/adicionar/', AdicionarGrupoFiscalView.as_view(), name='addgrupofiscalview'),
+    path('grupofiscal/editar/<int:pk>/', EditarGrupoFiscalView.as_view(), name='editargrupofiscalview'),
 
-    # Nota fiscal entrada
-    # fiscal/notafiscal/entrada/listanotafiscal
-    url(r'notafiscal/entrada/listanotafiscal/$',
-        views.NotaFiscalEntradaListView.as_view(), name='listanotafiscalentradaview'),
-    # fiscal/notafiscal/entrada/editar/
-    url(r'notafiscal/entrada/editar/(?P<pk>[0-9]+)/$', views.EditarNotaFiscalEntradaView.as_view(
-    ), name='editarnotafiscalentradaview'),
-    # fiscal/notafiscal/entrada/importar/
-    url(r'notafiscal/entrada/importar/$',
-        views.ImportarNotaEntradaView.as_view(), name='importarnotafiscalentrada'),
-
-    # Configuracao NF-e
-    url(r'notafiscal/configuracaonotafiscal/$',
-        views.ConfiguracaoNotaFiscalView.as_view(), name='configuracaonotafiscal'),
-
-    # Natureza operacao
-    # fiscal/naturezaoperacao/adicionar/
-    url(r'naturezaoperacao/adicionar/$',
-        views.AdicionarNaturezaOperacaoView.as_view(), name='addnaturezaoperacaoview'),
-    # fiscal/naturezaoperacao/listanaturezaoperacao
-    url(r'naturezaoperacao/listanaturezaoperacao/$',
-        views.NaturezaOperacaoListView.as_view(), name='listanaturezaoperacaoview'),
-    # fiscal/naturezaoperacao/editar/
-    url(r'naturezaoperacao/editar/(?P<pk>[0-9]+)/$', views.EditarNaturezaOperacaoView.as_view(
-    ), name='editarnaturezaoperacaoview'),
-
-    # Grupo fiscal
-    # fiscal/grupofiscal/adicionar/
-    url(r'grupofiscal/adicionar/$',
-        views.AdicionarGrupoFiscalView.as_view(), name='addgrupofiscalview'),
-    # fiscal/grupofiscal/listagrupofiscalview
-    url(r'grupofiscal/listagrupofiscal/$',
-        views.GrupoFiscalListView.as_view(), name='listagrupofiscalview'),
-    # fiscal/grupofiscal/editar/
-    url(r'grupofiscal/editar/(?P<pk>[0-9]+)/$',
-        views.EditarGrupoFiscalView.as_view(), name='editargrupofiscalview'),
-
-    # Acoes Nota Fiscal
-    # Validar XML nota
-    url(r'notafiscal/validar/(?P<pk>[0-9]+)/$',
-        views.ValidarNotaView.as_view(), name='validarnotafiscal'),
-    # fiscal/notafiscal/emitir/
-    url(r'notafiscal/emitir/(?P<pk>[0-9]+)/$',
-        views.EmitirNotaView.as_view(), name='emitirnotafiscal'),
-    # Clonar nota
-    url(r'notafiscal/copiar/(?P<pk>[0-9]+)/$',
-        views.GerarCopiaNotaView.as_view(), name='copiarnotafiscal'),
-    # Cancelar nota
-    url(r'notafiscal/cancelar/(?P<pk>[0-9]+)/$',
-        views.CancelarNotaView.as_view(), name='cancelarnotafiscal'),
-    # Gerar DANFE
-    url(r'notafiscal/gerardanfe/(?P<pk>[0-9]+)/$',
-        views.GerarDanfeView.as_view(), name='gerardanfe'),
-    # Gerar DANFCE
-    url(r'notafiscal/gerardanfce/(?P<pk>[0-9]+)/$',
-        views.GerarDanfceView.as_view(), name='gerardanfce'),
-
-    # Comunicacao SEFAZ
-    # Consultar cadastro
-    url(r'notafiscal/consultarcadastro/$',
-        views.ConsultarCadastroView.as_view(), name='consultarcadastro'),
-    # Inutilizar notas
-    url(r'notafiscal/inutilizarnotas/$',
-        views.InutilizarNotasView.as_view(), name='inutilizarnotas'),
-    # Consultar nota
-    url(r'notafiscal/consultarnota/$',
-        views.ConsultarNotaView.as_view(), name='consultarnota'),
-    url(r'^notafiscal/consultarnota/(?P<pk>[0-9]+)/$',
-        views.ConsultarNotaView.as_view(), name='consultarnota'),
-    # Baixar nota
-    url(r'notafiscal/baixarnota/$',
-        views.BaixarNotaView.as_view(), name='baixarnota'),
-    url(r'^notafiscal/baixarnota/(?P<pk>[0-9]+)/$',
-        views.BaixarNotaView.as_view(), name='baixarnota'),
-    # Manifestacao destinatario
-    url(r'notafiscal/manifestacaodestinatario/$',
-        views.ManifestacaoDestinatarioView.as_view(), name='manifestacaodestinatario'),
+    # URLs de Serviços SEFAZ
+    path('sefaz/consultar-cadastro/', ConsultarCadastroSefazView.as_view(), name='consultarcadastro'),
+    path('sefaz/inutilizar-notas/', InutilizarNotasFiscaisView.as_view(), name='inutilizarnotas'),
+    path('sefaz/consultar-nota/', ConsultarNotaFiscalSefazView.as_view(), name='consultarnota'), 
+    path('sefaz/consultar-nota/<int:pk>/', ConsultarNotaFiscalSefazView.as_view(), name='consultarnotapk'), 
+    # URL para Manifestação do Destinatário (ATIVA)
+    path('sefaz/manifestacao-destinatario/', ManifestacaoDestinatarioView.as_view(), name='manifestacaodestinatario'),
 ]

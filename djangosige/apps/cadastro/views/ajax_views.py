@@ -5,8 +5,9 @@ from django.http import HttpResponse
 from django.core import serializers
 
 from djangosige.apps.cadastro.models import Pessoa, Cliente, Fornecedor, Transportadora, Produto
-from djangosige.apps.fiscal.models import ICMS, ICMSSN, IPI, ICMSUFDest
-
+#from djangosige.apps.fiscal.models import ICMS, ICMSSN, IPI, ICMSUFDest
+from djangosige.apps.fiscal.models import TributoICMS, TributoIPI 
+# E remova ICMSSN, ICMSUFDest por enquanto, ou ajuste se eles existirem com outros nomes
 
 class InfoCliente(View):
 
@@ -87,7 +88,7 @@ class InfoTransportadora(View):
         return HttpResponse(data, content_type='application/json')
 
 
-class InfoProduto(View):
+"""class InfoProduto(View):
 
     def post(self, request, *args, **kwargs):
         obj_list = []
@@ -115,4 +116,57 @@ class InfoProduto(View):
                                                                'p_fcp_dest', 'p_icms_dest', 'p_icms_inter', 'p_icms_inter_part',
                                                                'ipi_incluido_preco', 'incluir_bc_icms', 'incluir_bc_icmsst', 'icmssn_incluido_preco',
                                                                'icmssnst_incluido_preco', 'icms_incluido_preco', 'icmsst_incluido_preco'))
-        return HttpResponse(data, content_type='application/json')
+        return HttpResponse(data, content_type='application/json') """
+
+class InfoProduto(View):
+    def post(self, request, *args, **kwargs):
+        obj_list = []
+        try:
+            pro = Produto.objects.get(pk=request.POST.get('produtoId'))
+            obj_list.append(pro)
+
+            if pro.grupo_fiscal: # Verifica se o produto tem um grupo fiscal associado
+                grupo_fiscal_obj = pro.grupo_fiscal # Instância de GrupoFiscal
+
+                # Busca TributoICMS associado ao GrupoFiscal
+                # A lógica para diferenciar Simples Nacional vs Regime Normal
+                # deve estar dentro do modelo TributoICMS ou ser tratada
+                # ao interpretar os dados do grupo_fiscal_obj.regime_trib.
+                # Para esta view, buscamos a configuração de TributoICMS.
+                try:
+                    # Assumindo que TributoICMS tem uma ForeignKey para GrupoFiscal
+                    icms_config = TributoICMS.objects.get(grupo_fiscal=grupo_fiscal_obj)
+                    obj_list.append(icms_config)
+                except TributoICMS.DoesNotExist:
+                    # Tratar caso não exista configuração de ICMS para o grupo
+                    pass 
+                except TributoICMS.MultipleObjectsReturned:
+                    # Tratar caso haja múltiplas configurações (idealmente não deveria)
+                    icms_config = TributoICMS.objects.filter(grupo_fiscal=grupo_fiscal_obj).first()
+                    if icms_config:
+                        obj_list.append(icms_config)
+                    pass
+
+
+                # Busca TributoIPI associado ao GrupoFiscal
+                try:
+                    # Assumindo que TributoIPI tem uma ForeignKey para GrupoFiscal
+                    ipi_config = TributoIPI.objects.get(grupo_fiscal=grupo_fiscal_obj)
+                    obj_list.append(ipi_config)
+                except TributoIPI.DoesNotExist:
+                    pass
+                except TributoIPI.MultipleObjectsReturned:
+                    ipi_config = TributoIPI.objects.filter(grupo_fiscal=grupo_fiscal_obj).first()
+                    if ipi_config:
+                        obj_list.append(ipi_config)
+                    pass
+                
+                # Informações de ICMSUFDest e ICMSSN, se necessárias para o frontend,
+                # deveriam ser campos/propriedades dentro do modelo GrupoFiscal ou TributoICMS.
+                # Por exemplo, você poderia adicionar ao obj_list um dicionário com esses dados:
+                # if hasattr(grupo_fiscal_obj, 'get_info_ufdest'):
+                #     obj_list.append(grupo_fiscal_obj.get_info_ufdest())
+
+        except Produto.DoesNotExist:
+            return HttpResponse(serializers.serialize('json', []), content_type='application/json')
+

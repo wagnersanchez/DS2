@@ -1,311 +1,287 @@
-# -*- coding: utf-8 -*-
+# djangosige/apps/fiscal/forms.py
+# -*- coding: utf-8 -*- 
 
 from django import forms
 from django.forms import inlineformset_factory
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from djangosige.apps.fiscal.models import NotaFiscalSaida, NotaFiscalEntrada, AutXML, ConfiguracaoNotaFiscal, TP_AMB_ESCOLHAS, MOD_NFE_ESCOLHAS
-from djangosige.apps.cadastro.models import Empresa
+# Importa o modelo NotaFiscal unificado e outros modelos necessários
+from djangosige.apps.fiscal.models import NotaFiscal # Modelo unificado
+from djangosige.apps.fiscal.models import NaturezaOperacao # Necessário para NotaFiscalForm
+from djangosige.apps.cadastro.models import Empresa, Cliente, MinhaEmpresa # Necessário para NotaFiscalForm
 
-try:
-    from pysignfe.nfe.manifestacao_destinatario import MD_CONFIRMACAO_OPERACAO, MD_DESCONHECIMENTO_OPERACAO, MD_OPERACAO_NAO_REALIZADA, MD_CIENCIA_OPERACAO
-except ImportError:
-    MD_CONFIRMACAO_OPERACAO = u'210200'
-    MD_DESCONHECIMENTO_OPERACAO = u'210220'
-    MD_OPERACAO_NAO_REALIZADA = u'210240'
-    MD_CIENCIA_OPERACAO = u'210210'
-
-TP_MANIFESTO_OPCOES = (
-    (MD_CONFIRMACAO_OPERACAO, u'Confirmação da Operação'),
-    (MD_DESCONHECIMENTO_OPERACAO, u'Desconhecimento da Operação'),
-    (MD_OPERACAO_NAO_REALIZADA, u'Operação Não Realizada'),
-    (MD_CIENCIA_OPERACAO, u'Ciência da Emissão (ou Ciência da Operação)'),
+# Definição local das constantes, já que a importação original falhou.
+TP_AMB_ESCOLHAS = (
+    ('1', _('Produção')),
+    ('2', _('Homologação')),
 )
 
+MOD_NFE_ESCOLHAS = (
+    ('55', _('NF-e')),
+    ('65', _('NFC-e')),
+)
 
-class NotaFiscalForm(forms.ModelForm):
+# As constantes MD_... e TP_MANIFESTO_OPCOES abaixo não são mais necessárias
+# se o ManifestacaoDestinatarioForm definir TIPOS_MANIFESTACAO internamente.
+# No entanto, como estavam no seu arquivo, vou mantê-las comentadas para referência,
+# mas o ManifestacaoDestinatarioForm atualizado abaixo usa sua própria definição.
+# try:
+#     from pysignfe.nfe.manifestacao_destinatario import MD_CONFIRMACAO_OPERACAO, MD_DESCONHECIMENTO_OPERACAO, MD_OPERACAO_NAO_REALIZADA, MD_CIENCIA_OPERACAO
+# except ImportError:
+#     MD_CONFIRMACAO_OPERACAO = u'210200'
+#     MD_DESCONHECIMENTO_OPERACAO = u'210220'
+#     MD_OPERACAO_NAO_REALIZADA = u'210240'
+#     MD_CIENCIA_OPERACAO = u'210210'
 
+# TP_MANIFESTO_OPCOES = (
+#     (MD_CONFIRMACAO_OPERACAO, u'Confirmação da Operação'),
+#     (MD_DESCONHECIMENTO_OPERACAO, u'Desconhecimento da Operação'),
+#     (MD_OPERACAO_NAO_REALIZADA, u'Operação Não Realizada'),
+#     (MD_CIENCIA_OPERACAO, u'Ciência da Emissão (ou Ciência da Operação)'),
+# )
+
+
+class NotaFiscalFormBase(forms.ModelForm):
     def __init__(self, *args, **kwargs):
-        super(NotaFiscalForm, self).__init__(*args, **kwargs)
-        self.fields['dhemi'].input_formats = ('%d/%m/%Y %H:%M',)
+        super().__init__(*args, **kwargs)
+        if 'data_emissao' in self.fields:
+            self.fields['data_emissao'].input_formats = ('%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M')
+            self.fields['data_emissao'].widget.format = '%d/%m/%Y %H:%M'
+            self.fields['data_emissao'].localize = True
+
+        if 'emitente' in self.fields and self.instance and self.instance.pk:
+            self.fields['emitente'].disabled = True
 
     class Meta:
-        fields = ('versao', 'status_nfe', 'natop', 'indpag', 'mod', 'serie', 'dhemi', 'dhsaient', 'iddest',
-                  'tp_imp', 'tp_emis', 'tp_amb', 'fin_nfe', 'ind_final', 'ind_pres', 'inf_ad_fisco', 'inf_cpl',)
-
+        model = NotaFiscal
+        fields = (
+            'natureza_operacao', 'destinatario', 'serie', 'numero', 
+            'informacoes_adicionais_fisco', 'informacoes_complementares',
+            'valor_frete', 'valor_seguro', 'valor_desconto', 'valor_outros',
+        )
         widgets = {
-            'versao': forms.Select(attrs={'class': 'form-control'}),
-            'status_nfe': forms.Select(attrs={'class': 'form-control', 'disabled': True}),
-            'natop': forms.TextInput(attrs={'class': 'form-control'}),
-            'indpag': forms.Select(attrs={'class': 'form-control'}),
-            'mod': forms.Select(attrs={'class': 'form-control'}),
-            'serie': forms.TextInput(attrs={'class': 'form-control'}),
-            'dhemi': forms.DateTimeInput(attrs={'class': 'form-control datetimepicker'}, format='%d/%m/%Y %H:%M'),
-            'dhsaient': forms.DateTimeInput(attrs={'class': 'form-control datetimepicker'}, format='%d/%m/%Y %H:%M'),
-            'iddest': forms.Select(attrs={'class': 'form-control'}),
-            'tp_imp': forms.Select(attrs={'class': 'form-control'}),
-            'tp_emis': forms.Select(attrs={'class': 'form-control'}),
-            'tp_amb': forms.Select(attrs={'class': 'form-control'}),
-            'fin_nfe': forms.Select(attrs={'class': 'form-control'}),
-            'ind_final': forms.Select(attrs={'class': 'form-control'}),
-            'ind_pres': forms.Select(attrs={'class': 'form-control'}),
-            'inf_ad_fisco': forms.Textarea(attrs={'class': 'form-control'}),
-            'inf_cpl': forms.Textarea(attrs={'class': 'form-control'}),
+            'natureza_operacao': forms.Select(attrs={'class': 'form-control'}),
+            'destinatario': forms.Select(attrs={'class': 'form-control'}),
+            'serie': forms.TextInput(attrs={'class': 'form-control', 'maxlength': '3'}),
+            'numero': forms.NumberInput(attrs={'class': 'form-control'}),
+            'informacoes_adicionais_fisco': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+            'informacoes_complementares': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+            'valor_frete': forms.NumberInput(attrs={'class': 'form-control decimal-mask'}),
+            'valor_seguro': forms.NumberInput(attrs={'class': 'form-control decimal-mask'}),
+            'valor_desconto': forms.NumberInput(attrs={'class': 'form-control decimal-mask'}),
+            'valor_outros': forms.NumberInput(attrs={'class': 'form-control decimal-mask'}),
         }
         labels = {
-            'versao': _('Versão'),
-            'status_nfe': _('Status'),
-            'natop': _('Natureza da Operação'),
-            'indpag': _('Forma de pagamento'),
-            'mod': _('Modelo'),
+            'natureza_operacao': _('Natureza da Operação'),
+            'destinatario': _('Destinatário (Cliente/Fornecedor)'),
             'serie': _('Série'),
-            'dhemi': _('Data e hora de emissão'),
-            'dhsaient': _('Data e hora de Saída/Entrada'),
-            'iddest': _('Destino da operação'),
-            'tp_imp': _('Tipo impressão da DANFE'),
-            'tp_emis': _('Forma de emissão'),
-            'tp_amb': _('Ambiente'),
-            'fin_nfe': _('Finalidade da emissão'),
-            'ind_final': _('Consumidor final'),
-            'ind_pres': _('Tipo de atendimento'),
-            'inf_ad_fisco': _('Informações Adicionais de Interesse do Fisco'),
-            'inf_cpl': _('Informações Complementares de interesse do Contribuinte'),
+            'numero': _('Número da Nota'),
+            'informacoes_adicionais_fisco': _('Informações Adicionais de Interesse do Fisco'),
+            'informacoes_complementares': _('Informações Complementares de interesse do Contribuinte'),
         }
 
-        error_messages = {
-            'n_nf': {
-                'unique': _("Nota fiscal com este número já existe"),
-            },
-        }
-
-
-class NotaFiscalSaidaForm(NotaFiscalForm):
-
-    def __init__(self, *args, **kwargs):
-        super(NotaFiscalSaidaForm, self).__init__(*args, **kwargs)
-        self.fields['v_orig'].localize = True
-        self.fields['v_desc'].localize = True
-        self.fields['v_liq'].localize = True
-
-    class Meta(NotaFiscalForm.Meta):
-        model = NotaFiscalSaida
-        fields = NotaFiscalForm.Meta.fields + ('n_nf_saida', 'tpnf', 'venda', 'emit_saida',
-                                               'dest_saida', 'n_fat', 'v_orig', 'v_desc', 'v_liq', 'grupo_cobr', 'arquivo_proc',)
-        widgets = NotaFiscalForm.Meta.widgets
-        widgets['n_nf_saida'] = forms.TextInput(
-            attrs={'class': 'form-control'})
-        widgets['venda'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['emit_saida'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['dest_saida'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['n_fat'] = forms.TextInput(attrs={'class': 'form-control'})
-        widgets['tpnf'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['v_orig'] = forms.TextInput(
-            attrs={'class': 'form-control decimal-mask'})
-        widgets['v_desc'] = forms.TextInput(
-            attrs={'class': 'form-control decimal-mask'})
-        widgets['v_liq'] = forms.TextInput(
-            attrs={'class': 'form-control decimal-mask'})
-        widgets['grupo_cobr'] = forms.CheckboxInput(
-            attrs={'class': 'form-control'})
-        widgets['arquivo_proc'] = forms.FileInput(
-            attrs={'class': 'form-control'})
-        labels = NotaFiscalForm.Meta.labels
-        labels['n_nf_saida'] = _('Número')
-        labels['venda'] = _('Venda')
-        labels['emit_saida'] = _('Emitente (Empresa)')
-        labels['dest_saida'] = _('Destinatário (Cliente)')
-        labels['n_fat'] = _('Número da fatura')
-        labels['tpnf'] = _('Tipo de Operação')
-        labels['v_orig'] = _('Valor original da fatura')
-        labels['v_desc'] = _('Valor do desconto')
-        labels['v_liq'] = _('Valor líquido da fatura')
-        labels['grupo_cobr'] = _(
-            'Inserir dados de cobrança (Fatura/Duplicatas) na NF-e?')
-        labels['arquivo_proc'] = _('Arquivo de processamento (*_procNFe.xml)')
-
-
-class NotaFiscalEntradaForm(NotaFiscalForm):
-
-    class Meta(NotaFiscalForm.Meta):
-        model = NotaFiscalEntrada
-        fields = NotaFiscalForm.Meta.fields + \
-            ('n_nf_entrada', 'compra', 'emit_entrada', 'dest_entrada',)
-        widgets = NotaFiscalForm.Meta.widgets
-        widgets['n_nf_entrada'] = forms.TextInput(
-            attrs={'class': 'form-control'})
-        widgets['compra'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['emit_entrada'] = forms.Select(attrs={'class': 'form-control'})
-        widgets['dest_entrada'] = forms.Select(attrs={'class': 'form-control'})
-        labels = NotaFiscalForm.Meta.labels
-        labels['n_nf_entrada'] = _('Número')
-        labels['compra'] = _('Compra')
-        labels['emit_entrada'] = _('Emitente (Fornecedor)')
-        labels['dest_entrada'] = _('Destinatário (Empresa)')
-
+class NotaFiscalOperacaoForm(NotaFiscalFormBase):
+    pass
 
 class EmissaoNotaFiscalForm(forms.ModelForm):
-
-    def __init__(self, *args, **kwargs):
-        super(EmissaoNotaFiscalForm, self).__init__(*args, **kwargs)
-        self.fields['dhemi'].input_formats = ('%d/%m/%Y %H:%M',)
-
     class Meta:
-        model = NotaFiscalSaida
-        fields = ('versao', 'dhemi', 'dhsaient',
-                  'tp_imp', 'tp_emis', 'tp_amb',)
-
+        model = NotaFiscal 
+        fields = ('data_emissao',) 
         widgets = {
-            'versao': forms.Select(attrs={'class': 'form-control', 'required': True}),
-            'dhemi': forms.DateTimeInput(attrs={'class': 'form-control datetimepicker', 'required': True}, format='%d/%m/%Y %H:%M'),
-            'dhsaient': forms.DateTimeInput(attrs={'class': 'form-control datetimepicker'}, format='%d/%m/%Y %H:%M'),
-            'tp_imp': forms.Select(attrs={'class': 'form-control', 'required': True}),
-            'tp_emis': forms.Select(attrs={'class': 'form-control', 'required': True}),
-            'tp_amb': forms.Select(attrs={'class': 'form-control', 'required': True}),
+            'data_emissao': forms.DateTimeInput(
+                attrs={'class': 'form-control datetimepicker', 'required': True}, 
+                format='%d/%m/%Y %H:%M:%S'
+            ),
         }
         labels = {
-            'versao': _('Versão'),
-            'dhemi': _('Data e hora de emissão'),
-            'dhsaient': _('Data e hora de Saída/Entrada'),
-            'tp_imp': _('Tipo impressão da DANFE'),
-            'tp_emis': _('Forma de emissão'),
-            'tp_amb': _('Ambiente'),
+            'data_emissao': _('Confirmar Data e Hora de Emissão'),
         }
 
-
-class CancelamentoNotaFiscalForm(forms.ModelForm):
-
-    class Meta:
-        model = NotaFiscalSaida
-        fields = ('just_canc', 'chave',
-                  'numero_protocolo', 'tp_emis', 'tp_amb',)
-
-        widgets = {
-            'just_canc': forms.Textarea(attrs={'class': 'form-control', 'required': True}),
-            'chave': forms.TextInput(attrs={'class': 'form-control', 'required': True}),
-            'numero_protocolo': forms.TextInput(attrs={'class': 'form-control', 'required': True}),
-            'tp_emis': forms.Select(attrs={'class': 'form-control', 'required': True}),
-            'tp_amb': forms.Select(attrs={'class': 'form-control', 'required': True}),
-        }
-        labels = {
-            'just_canc': _('Justificativa do cancelamento'),
-            'chave': _('Chave'),
-            'numero_protocolo': _('Número do protocolo'),
-            'tp_emis': _('Forma de emissão'),
-            'tp_amb': _('Ambiente'),
-        }
-
+class CancelamentoNotaFiscalForm(forms.Form): 
+    justificativa_cancelamento = forms.CharField(
+        label=_('Justificativa do Cancelamento (mínimo 15 caracteres)'),
+        widget=forms.Textarea(attrs={'class': 'form-control', 'rows': 4}),
+        min_length=15,
+        required=True
+    )
 
 class ConsultarCadastroForm(forms.Form):
-    empresa = forms.ModelChoiceField(queryset=Empresa.objects.all(), widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Selecionar empresa', required=True)
-    salvar_arquivos = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Salvar arquivos XML gerados?', required=False)
-
+    empresa_para_certificado = forms.ModelChoiceField( 
+        queryset=MinhaEmpresa.objects.all(), 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Empresa (para usar o certificado)', 
+        required=True,
+        empty_label="Selecione a empresa para o certificado"
+    )
+    uf_consulta = forms.CharField(
+        label=_('UF do Contribuinte a Consultar (Sigla)'),
+        max_length=2,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: SP'})
+    )
+    documento_consulta = forms.CharField(
+        label=_('CNPJ, CPF ou IE do Contribuinte'),
+        max_length=14, 
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Apenas números'})
+    )
 
 class InutilizarNotasForm(forms.Form):
-    ambiente = forms.ChoiceField(choices=TP_AMB_ESCOLHAS, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Ambiente', initial='2', required=True)
-    empresa = forms.ModelChoiceField(queryset=Empresa.objects.all(), widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Selecionar empresa emitente', required=True)
-    modelo = forms.ChoiceField(choices=MOD_NFE_ESCOLHAS, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Modelo', required=True)
-    serie = forms.CharField(max_length=3, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Série', required=True)
-    numero_inicial = forms.CharField(max_length=9, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Número inicial', required=True)
-    numero_final = forms.CharField(max_length=9, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Número final', required=False)
-    justificativa = forms.CharField(max_length=255, widget=forms.Textarea(
-        attrs={'class': 'form-control', }), label='Justificativa', required=False)
-    salvar_arquivos = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Salvar arquivos XML gerados?', required=False)
-
+    ambiente = forms.ChoiceField(
+        choices=TP_AMB_ESCOLHAS, 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Ambiente', 
+        initial='2', 
+        required=True
+    )
+    empresa_para_certificado = forms.ModelChoiceField( 
+        queryset=MinhaEmpresa.objects.all(), 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Empresa Emitente (para usar o certificado)', 
+        required=True,
+        empty_label="Selecione a empresa emitente"
+    )
+    modelo = forms.ChoiceField(
+        choices=MOD_NFE_ESCOLHAS, 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Modelo Documento', 
+        initial='55',
+        required=True
+    )
+    serie = forms.CharField(
+        max_length=3, 
+        widget=forms.TextInput(attrs={'class': 'form-control'}), 
+        label='Série', 
+        required=True
+    )
+    numero_inicial = forms.IntegerField( 
+        widget=forms.NumberInput(attrs={'class': 'form-control'}), 
+        label='Número inicial da faixa', 
+        required=True
+    )
+    numero_final = forms.IntegerField( 
+        widget=forms.NumberInput(attrs={'class': 'form-control'}), 
+        label='Número final da faixa', 
+        required=True
+    )
+    justificativa = forms.CharField(
+        max_length=255, 
+        widget=forms.Textarea(attrs={'class': 'form-control', 'rows':3}), 
+        label='Justificativa (mínimo 15 caracteres)', 
+        min_length=15,
+        required=True
+    )
 
 class ConsultarNotaForm(forms.Form):
-    ambiente = forms.ChoiceField(choices=TP_AMB_ESCOLHAS, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Ambiente', initial='2', required=True)
-    nota = forms.ModelChoiceField(queryset=NotaFiscalSaida.objects.all(), widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Selecionar nota da base de dados', required=False)
-    chave = forms.CharField(max_length=44, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Chave da nota', required=False)
-    salvar_arquivos = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Salvar arquivos XML gerados?', required=False)
+    ambiente = forms.ChoiceField(
+        choices=TP_AMB_ESCOLHAS, 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Ambiente da NF-e', 
+        initial='2', 
+        required=True
+    )
+    chave_consulta = forms.CharField(
+        max_length=44, 
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '44 dígitos da chave de acesso'}), 
+        label='Chave de Acesso da NF-e', 
+        required=True
+    )
+    empresa_para_certificado = forms.ModelChoiceField(
+        queryset=MinhaEmpresa.objects.all(), 
+        widget=forms.Select(attrs={'class': 'form-control'}),
+        label='Empresa (para certificado da consulta)',
+        help_text="Empresa cujo certificado será usado para a consulta.",
+        required=True,
+        empty_label="Selecione a empresa para o certificado"
+    )
 
-
-class BaixarNotaForm(forms.Form):
-    ambiente = forms.ChoiceField(choices=TP_AMB_ESCOLHAS, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Ambiente', initial='2', required=True)
-    nota = forms.ModelChoiceField(queryset=NotaFiscalSaida.objects.all(), widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Selecionar nota da base de dados', required=False)
-    chave = forms.CharField(max_length=44, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Chave da nota', required=False)
-    ambiente_nacional = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Utilizar ambiente nacional?(Recomendado)', initial=True, required=False)
-    salvar_arquivos = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Salvar arquivos XML gerados?', required=False)
-
+class BaixarNotaForm(forms.Form): 
+    ambiente = forms.ChoiceField(
+        choices=TP_AMB_ESCOLHAS, 
+        widget=forms.Select(attrs={'class': 'form-control'}), 
+        label='Ambiente', 
+        initial='2', 
+        required=True
+    )
+    chave_download = forms.CharField(
+        max_length=44, 
+        widget=forms.TextInput(attrs={'class': 'form-control'}), 
+        label='Chave de Acesso da NF-e para Download', 
+        required=True
+    )
+    empresa_manifestante = forms.ModelChoiceField( 
+        queryset=MinhaEmpresa.objects.all(), 
+        widget=forms.Select(attrs={'class': 'form-control'}),
+        label='Empresa/CNPJ Manifestante (para certificado)',
+        required=True,
+        empty_label="Selecione a empresa manifestante"
+    )
 
 class ManifestacaoDestinatarioForm(forms.Form):
-    cnpj = forms.CharField(max_length=16, widget=forms.TextInput(attrs={
-                           'class': 'form-control', }), label='CNPJ do autor do Evento(apenas digitos)', required=True)
-    tipo_manifesto = forms.ChoiceField(choices=TP_MANIFESTO_OPCOES, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Tipo de manifesto', required=True)
-    ambiente = forms.ChoiceField(choices=TP_AMB_ESCOLHAS, widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Ambiente', initial='2', required=True)
-    nota = forms.ModelChoiceField(queryset=NotaFiscalSaida.objects.all(), widget=forms.Select(
-        attrs={'class': 'form-control', }), label='Selecionar nota da base de dados', required=False)
-    chave = forms.CharField(max_length=44, widget=forms.TextInput(
-        attrs={'class': 'form-control', }), label='Chave da nota', required=False)
-    ambiente_nacional = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Utilizar ambiente nacional?(Recomendado)', initial=True, required=False)
-    justificativa = forms.CharField(max_length=255, widget=forms.Textarea(
-        attrs={'class': 'form-control', }), label='Justificativa', required=False)
-    salvar_arquivos = forms.BooleanField(widget=forms.CheckboxInput(
-        attrs={'class': 'form-control', }), label='Salvar arquivos XML gerados?', required=False)
+    TIPOS_MANIFESTACAO = [
+        ('210200', 'Confirmação da Operação'),
+        ('210210', 'Ciência da Emissão'),
+        ('210220', 'Desconhecimento da Operação'),
+        ('210240', 'Operação não Realizada'),
+    ]
+    
+    chave_nfe = forms.CharField(
+        label='Chave de Acesso da NF-e', 
+        max_length=44,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Digite os 44 dígitos da chave de acesso'})
+    )
+    tipo_manifestacao = forms.ChoiceField(
+        label='Tipo de Manifestação', 
+        choices=TIPOS_MANIFESTACAO,
+        widget=forms.Select(attrs={'class': 'form-control'})
+    )
+    justificativa = forms.CharField(
+        label='Justificativa', 
+        widget=forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Obrigatória para "Desconhecimento" ou "Operação não Realizada" (mínimo 15 caracteres)'}),
+        required=False 
+    )
+    empresa_manifestante = forms.ModelChoiceField(
+        queryset=MinhaEmpresa.objects.all(), 
+        label="Empresa (Destinatário da NF-e)",
+        widget=forms.Select(attrs={'class': 'form-control'}),
+        empty_label="Selecione a empresa que está manifestando",
+        help_text="A empresa selecionada aqui é o destinatário da NF-e que está realizando a manifestação."
+    )
 
+    def clean(self): # Esta é a definição correta do clean
+        cleaned_data = super().clean()
+        tipo_manifestacao = cleaned_data.get("tipo_manifestacao")
+        justificativa = cleaned_data.get("justificativa", "")
 
-class AutXMLForm(forms.ModelForm):
+        # Os códigos de evento para Desconhecimento e Operação Não Realizada são strings
+        if tipo_manifestacao in ['210220', '210240']: 
+            if not justificativa or len(justificativa.strip()) < 15:
+                self.add_error('justificativa', 'A justificativa é obrigatória e deve ter no mínimo 15 caracteres para este tipo de manifestação.')
+        return cleaned_data
+    
+    # A SEGUNDA DEFINIÇÃO DE clean FOI REMOVIDA DAQUI, POIS ESTAVA DUPLICADA E USAVA CONSTANTES INDEFINIDAS
 
-    class Meta:
-        model = AutXML
-        fields = ('cpf_cnpj',)
-        labels = {
-            'cpf_cnpj': _('CPF/CNPJ (Apenas digitos)'),
-        }
-        widgets = {
-            'cpf_cnpj': forms.TextInput(attrs={'class': 'form-control'}),
-        }
+# --- Formulários comentados pois os modelos AutXML e ConfiguracaoNotaFiscal não foram definidos/refatorados ---
+# class AutXMLForm(forms.ModelForm):
+#     class Meta:
+#         model = AutXML 
+#         fields = ('cpf_cnpj',)
+#         labels = {
+#             'cpf_cnpj': _('CPF/CNPJ (Apenas digitos)'),
+#         }
+#         widgets = {
+#             'cpf_cnpj': forms.TextInput(attrs={'class': 'form-control'}),
+#         }
 
+# AutXMLFormSet = inlineformset_factory(
+#     NotaFiscal, 
+#     AutXML, 
+#     form=AutXMLForm, 
+#     extra=1, 
+#     can_delete=True
+# )
 
-class ConfiguracaoNotaFiscalForm(forms.ModelForm):
-
-    class Meta:
-        model = ConfiguracaoNotaFiscal
-        fields = ('serie_atual', 'ambiente', 'imp_danfe', 'arquivo_certificado_a1',
-                  'senha_certificado', 'inserir_logo_danfe', 'orientacao_logo_danfe', 'csc', 'cidtoken',)
-        labels = {
-            'arquivo_certificado_a1': _('Certificado A1'),
-            'serie_atual': _('Série atual'),
-            'ambiente': _('Ambiente'),
-            'imp_danfe': _('Tipo de impressão DANFE'),
-            'senha_certificado': _('Senha do certificado'),
-            'inserir_logo_danfe': _('Inserir logo da empresa no DANFE?'),
-            'orientacao_logo_danfe': _('Orientação do logo'),
-            'csc': _('Código de Segurança do Contribuinte'),
-            'cidtoken': _('Identificador do CSC'),
-        }
-        widgets = {
-            'arquivo_certificado_a1': forms.FileInput(attrs={'class': 'form-control'}),
-            'serie_atual': forms.TextInput(attrs={'class': 'form-control'}),
-            'ambiente': forms.Select(attrs={'class': 'form-control'}),
-            'imp_danfe': forms.Select(attrs={'class': 'form-control'}),
-            'senha_certificado': forms.PasswordInput(attrs={'class': 'form-control'}, render_value=True),
-            'inserir_logo_danfe': forms.CheckboxInput(attrs={'class': 'form-control'}),
-            'orientacao_logo_danfe': forms.Select(attrs={'class': 'form-control'}),
-            'csc': forms.TextInput(attrs={'class': 'form-control'}),
-            'cidtoken': forms.TextInput(attrs={'class': 'form-control'}),
-        }
-
-
-AutXMLFormSet = inlineformset_factory(
-    NotaFiscalSaida, AutXML, form=AutXMLForm, extra=1, can_delete=True)
+# class ConfiguracaoNotaFiscalForm(forms.ModelForm):
+#     class Meta:
+#         model = ConfiguracaoNotaFiscal 
+#         fields = ('serie_atual', 'ambiente', 'imp_danfe', 'arquivo_certificado_a1',
+#                   'senha_certificado', 'inserir_logo_danfe', 'orientacao_logo_danfe', 'csc', 'cidtoken',)
+# # ) # Parêntese final comentado

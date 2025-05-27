@@ -4,4 +4,6 @@ from django.apps import AppConfig
 
 
 class ComprasConfig(AppConfig):
-    name = 'compras'
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'djangosige.apps.compras'  # Nome completo do módulo
+    verbose_name = "Compras"  # Opcional

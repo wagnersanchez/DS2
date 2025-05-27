@@ -50,7 +50,7 @@ class ItensMovimento(models.Model):
     def format_estoque_atual_produto(self):
         estoque_atual = self.get_estoque_atual_produto()
         if isinstance(estoque_atual, Decimal):
-            return locale.format(u'%.2f', estoque_atual, 1)
+            return locale.format_string(u'%.2f', estoque_atual, 1)
         else:
             return estoque_atual
 

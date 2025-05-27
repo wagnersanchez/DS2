@@ -1,61 +1,60 @@
-# -*- coding: utf-8 -*-
-
+# djangosige/apps/fiscal/models/natureza_operacao.py
 from django.db import models
-
-TP_OPERACAO_OPCOES = (
-    (u'0', u'0 - Entrada'),
-    (u'1', u'1 - Saída'),
-)
-
-ID_DEST_OPCOES = (
-    (u'1', u'1 - Operação interna'),
-    (u'2', u'2 - Operação interestadual'),
-    (u'3', u'3 - Operação com exterior'),
-)
-
+from django.utils.translation import gettext_lazy as _
 
 class NaturezaOperacao(models.Model):
-    cfop = models.CharField(max_length=5)
-    descricao = models.CharField(max_length=255, null=True, blank=True)
-    tp_operacao = models.CharField(
-        max_length=1, choices=TP_OPERACAO_OPCOES, null=True, blank=True)
-    id_dest = models.CharField(
-        max_length=1, choices=ID_DEST_OPCOES, null=True, blank=True)
-
+    TIPO_OPERACAO_CHOICES = [
+        ('E', 'Entrada'),
+        ('S', 'Saída'),
+    ]
+    
+    codigo = models.CharField(
+        _('Código'), 
+        max_length=10, 
+        unique=True, 
+        null=True, 
+        blank=True # Permite que o código seja opcional inicialmente
+    )
+    # CORRIGIDO: Adicionado default='' para o campo descrição
+    descricao = models.CharField(
+        _('Descrição'), 
+        max_length=100,
+        default='' # Garante que novas instâncias e migrações tenham um valor
+    )
+    
+    tipo_operacao = models.CharField(
+        _('Tipo de Operação'),
+        max_length=1,
+        choices=TIPO_OPERACAO_CHOICES,
+        null=True, 
+        blank=True,
+    )
+    regime_especial = models.BooleanField(_('Regime Especial'), default=False)
+    incentivo_fiscal = models.BooleanField(_('Incentivo Fiscal'), default=False)
+    ativo = models.BooleanField(_('Ativo'), default=True)
+    
     class Meta:
-        verbose_name = "Natureza da Operação"
-
-    def set_values_by_cfop(self):
-        if self.cfop:
-            if self.cfop[0] == '1':
-                self.tp_operacao = u'0'
-                self.id_dest = u'1'
-            elif self.cfop[0] == '2':
-                self.tp_operacao = u'0'
-                self.id_dest = u'2'
-            elif self.cfop[0] == '3':
-                self.tp_operacao = u'0'
-                self.id_dest = u'3'
-            elif self.cfop[0] == '4':
-                self.tp_operacao = u'1'
-                self.id_dest = u'1'
-            elif self.cfop[0] == '5':
-                self.tp_operacao = u'1'
-                self.id_dest = u'2'
-            elif self.cfop[0] == '6':
-                self.tp_operacao = u'1'
-                self.id_dest = u'3'
-
-    def __unicode__(self):
-        if self.descricao:
-            s = u'%s - %s' % (self.cfop, self.descricao)
-        else:
-            s = u'%s' % (self.cfop)
-        return s
-
+        verbose_name = "Natureza de Operação"
+        verbose_name_plural = "Naturezas de Operação"
+        ordering = ['descricao']
+    
     def __str__(self):
-        if self.descricao:
-            s = u'%s - %s' % (self.cfop, self.descricao)
-        else:
-            s = u'%s' % (self.cfop)
-        return s
+        return f"{self.codigo or 'S/C'} - {self.descricao}"
+    
+    # Este método to_edoc() era para a estrutura anterior com erpbrasil.edoc.
+    # Ao usar nfelib diretamente no modelo NotaFiscal, o campo `descricao`
+    # será acessado diretamente (self.natureza_operacao.descricao).
+    # Considere remover ou adaptar este método se ele não for mais usado.
+    def to_edoc(self):
+        return self.descricao
+
+    @property
+    def tipo_operacao_nfelib(self):
+        """
+        Retorna o valor para o campo tpNF da NFe ('0' para Entrada, '1' para Saída).
+        """
+        if self.tipo_operacao == 'E':
+            return '0' # Entrada
+        elif self.tipo_operacao == 'S':
+            return '1' # Saída
+        return None # Ou um valor padrão se tipo_operacao for None
